@@ -171,7 +171,10 @@ if [ "$SKIP_AGENTCORE" = false ]; then
 
   # Always update permissions to latest
   echo "  Updating permissions policy..."
-  WORKSPACE_BUCKET_NAME="super-agent-workspaces-$ACCOUNT_ID"
+  # Read the actual workspace bucket name from stack outputs (matches CDK: super-agent-workspace-<account>)
+  WORKSPACE_BUCKET_NAME=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" --region "$REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='WorkspaceBucketName'].OutputValue" --output text 2>/dev/null || echo "super-agent-workspace-$ACCOUNT_ID")
   SKILLS_BUCKET_NAME=$(aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" --region "$REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='SkillsBucketName'].OutputValue" --output text 2>/dev/null || echo "")
@@ -262,7 +265,7 @@ if [ "$SKIP_AGENTCORE" = false ]; then
   ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/$ROLE_NAME"
 
   # Build environment variables JSON
-  ENV_VARS="{\"CLAUDE_CODE_USE_BEDROCK\":\"1\",\"ANTHROPIC_MODEL\":\"us.anthropic.claude-opus-4-6-v1\",\"AWS_REGION\":\"$REGION\",\"WORKSPACE_S3_REGION\":\"us-east-1\""
+  ENV_VARS="{\"CLAUDE_CODE_USE_BEDROCK\":\"1\",\"ANTHROPIC_MODEL\":\"us.anthropic.claude-opus-4-6-v1\",\"AWS_REGION\":\"$REGION\",\"WORKSPACE_S3_REGION\":\"$REGION\""
   if [ -n "$BEDROCK_AK" ] && [ -n "$BEDROCK_SK" ]; then
     ENV_VARS="$ENV_VARS,\"AWS_ACCESS_KEY_ID\":\"$BEDROCK_AK\",\"AWS_SECRET_ACCESS_KEY\":\"$BEDROCK_SK\""
   fi

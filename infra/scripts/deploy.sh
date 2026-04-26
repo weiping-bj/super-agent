@@ -395,6 +395,12 @@ if [ "$AGENT_COUNT" -gt "0" ] 2>/dev/null; then
   echo "  (Seed skipped: $AGENT_COUNT agents already exist)"
 else
   npx tsx prisma/seed.ts 2>/dev/null || echo "  (Seed failed or already seeded)"
+
+  # Set default password for seed admin user (local auth mode)
+  echo "  Setting admin default password..."
+  ADMIN_HASH=$(node -e 'require("bcryptjs").hash("Admin1234!", 10).then(h => process.stdout.write(h))')
+  psql "$PSQL_URL" -c "UPDATE profiles SET password_hash = '${ADMIN_HASH}' WHERE username = 'admin@example.com' AND password_hash IS NULL;" 2>/dev/null || true
+  echo "  Admin login: admin@example.com / Admin1234!"
 fi
 
 echo "  Restarting backend..."
