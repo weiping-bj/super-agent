@@ -252,6 +252,11 @@ if [ -f /opt/super-agent/.env ]; then
   # Start from existing production .env (strip comments/blanks for key lookup)
   cp /opt/super-agent/.env /tmp/new-env
 
+  # Replace placeholder values (left by UserData bootstrap)
+  sed -i 's|^DATABASE_URL=CHANGE_ME$|#DATABASE_URL_PLACEHOLDER_REMOVED|' /tmp/new-env
+  sed -i 's|^JWT_SECRET=CHANGE_ME$|#JWT_SECRET_PLACEHOLDER_REMOVED|' /tmp/new-env
+  sed -i 's|^S3_BUCKET_NAME=CHANGE_ME$|#S3_BUCKET_NAME_PLACEHOLDER_REMOVED|' /tmp/new-env
+
   # Append any base keys that are missing from production
   while IFS= read -r line; do
     [[ "\$line" =~ ^#.*$ ]] && continue
@@ -368,7 +373,7 @@ cd /opt/super-agent/backend
 ln -sf /opt/super-agent/.env .env
 
 echo "  npm ci..."
-npm ci --production=false
+npm ci --production=false || npm install
 
 echo "  prisma generate..."
 npx prisma generate

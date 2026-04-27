@@ -21,7 +21,6 @@ apt-get install -y libreoffice-core libreoffice-impress libreoffice-writer libre
 echo ">>> Installing Node.js 22..."
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
-npm install -g npm@latest
 
 # PostgreSQL client
 echo ">>> Installing PostgreSQL client..."

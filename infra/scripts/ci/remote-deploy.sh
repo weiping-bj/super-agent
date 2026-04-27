@@ -7,7 +7,7 @@ cd /opt/super-agent/backend
 ln -sf /opt/super-agent/.env .env
 
 echo "npm ci..."
-npm ci --production=false
+npm ci --production=false || npm install
 
 echo "prisma generate..."
 npx prisma generate
