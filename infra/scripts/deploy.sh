@@ -253,9 +253,7 @@ if [ -f /opt/super-agent/.env ]; then
   cp /opt/super-agent/.env /tmp/new-env
 
   # Replace placeholder values (left by UserData bootstrap)
-  sed -i 's|^DATABASE_URL=CHANGE_ME$|#DATABASE_URL_PLACEHOLDER_REMOVED|' /tmp/new-env
-  sed -i 's|^JWT_SECRET=CHANGE_ME$|#JWT_SECRET_PLACEHOLDER_REMOVED|' /tmp/new-env
-  sed -i 's|^S3_BUCKET_NAME=CHANGE_ME$|#S3_BUCKET_NAME_PLACEHOLDER_REMOVED|' /tmp/new-env
+  sed -i '/=CHANGE_ME$/d' /tmp/new-env
 
   # Append any base keys that are missing from production
   while IFS= read -r line; do

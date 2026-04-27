@@ -337,7 +337,7 @@ if [ "$SKIP_AGENTCORE" = false ]; then
   # Try to find existing runtime (stack-scoped name)
   RUNTIME_NAME="${STACK_NAME}Runtime"
   RUNTIME_ID=$(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" \
-    --query "agentRuntimeSummaries[?agentRuntimeName=='${RUNTIME_NAME}'].agentRuntimeId" \
+    --query "agentRuntimes[?agentRuntimeName=='${RUNTIME_NAME}'].agentRuntimeId" \
     --output text 2>/dev/null || echo "")
 
   if [ -n "$RUNTIME_ID" ] && [ "$RUNTIME_ID" != "None" ]; then
