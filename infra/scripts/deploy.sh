@@ -312,7 +312,7 @@ VITE_AUTH_MODE=local
 VITE_EOF
   fi
 
-  npm ci
+  npm install
   npx vite build
 
   # Always sync to EC2 (Nginx 443 fallback)
@@ -370,8 +370,8 @@ set -euo pipefail
 cd /opt/super-agent/backend
 ln -sf /opt/super-agent/.env .env
 
-echo "  npm ci..."
-npm ci --production=false || npm install
+echo "  npm install..."
+npm install
 
 echo "  prisma generate..."
 npx prisma generate
