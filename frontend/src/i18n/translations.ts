@@ -4388,5 +4388,16 @@ export const translations: TranslationData = {
   'support.category': { en: 'Category', cn: '分类' },
   'support.conditions': { en: 'Conditions', cn: '触发条件' },
   'support.actions': { en: 'Actions', cn: '触发动作' },
-  'support.rulePriority': { en: 'Rule Priority', cn: '规则优先级' }
+  'support.rulePriority': { en: 'Rule Priority', cn: '规则优先级' },
+
+  // Skills Panel
+  'skills.title': { en: 'Skills', cn: '技能' },
+  'skills.tabInstalled': { en: 'Installed', cn: '已安装' },
+  'skills.tabInternal': { en: 'Internal', cn: '内部' },
+  'skills.tabExternal': { en: 'External', cn: '外部' },
+  'skills.deleteConfirmTitle': { en: 'Remove Skill', cn: '移除技能' },
+  'skills.deleteConfirmDesc': { en: 'Do you also want to remove "{skillName}" from the scope definition? If removed, new sessions will no longer include this skill automatically.', cn: '是否同时从 Scope 定义中移除「{skillName}」？移除后，新会话将不再自动包含此技能。' },
+  'skills.deleteFromBoth': { en: 'Remove from session & scope definition', cn: '从会话和 Scope 定义中移除' },
+  'skills.deleteFromSession': { en: 'Remove from this session only', cn: '仅从当前会话移除' },
+  'common.cancel': { en: 'Cancel', cn: '取消' }
 }

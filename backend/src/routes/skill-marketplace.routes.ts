@@ -7,6 +7,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { skillMarketplaceService } from '../services/skill-marketplace.service.js';
 import { chatService } from '../services/chat.service.js';
 import { workspaceManager } from '../services/workspace-manager.js';
+import { skillService } from '../services/skill.service.js';
 import { authenticate } from '../middleware/auth.js';
 
 interface SearchQuery { Querystring: { q: string } }
@@ -109,6 +110,25 @@ export async function skillMarketplaceRoutes(fastify: FastifyInstance): Promise<
             result.name,
             result.localPath,
           );
+
+          // Auto-sync: bind the installed skill to the session's scope so
+          // future sessions under the same scope automatically include it.
+          try {
+            await skillService.bindSkillToScope(
+              request.user!.orgId,
+              result.skillId,
+              session.business_scope_id,
+            );
+            request.log.info(
+              { skillId: result.skillId, scopeId: session.business_scope_id },
+              'Skill auto-synced to scope definition',
+            );
+          } catch (syncErr) {
+            request.log.warn(
+              { err: syncErr, skillId: result.skillId, scopeId: session.business_scope_id },
+              'Failed to auto-sync skill to scope (non-blocking)',
+            );
+          }
 
           // In agentcore mode, also write skill files directly to the container
           const { config: appConfig } = await import('../config/index.js');
