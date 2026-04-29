@@ -711,6 +711,18 @@ function ToolCard({ tool, installing, onInstall }: { tool: ToolItem; installing?
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 flex items-center gap-1">
               <Loader2 className="w-3 h-3 animate-spin" />Scanning
             </span>
+          ) : tool.skillStatus === 'scan_failed' ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onInstall?.(tool) }}
+              disabled={installing}
+              className="text-[10px] font-medium px-2.5 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {installing ? (
+                <><Loader2 className="w-3 h-3 animate-spin" />Retrying...</>
+              ) : (
+                <><AlertCircle className="w-3 h-3" />Install Again</>
+              )}
+            </button>
           ) : tool.skillStatus === 'quarantined' ? (
             <div className="flex items-center gap-1.5">
               <button
@@ -1189,10 +1201,17 @@ export function Tools() {
   // Load installed skill names and statuses from the org's skill catalog
   const loadInstalledSkillNames = useCallback(async () => {
     try {
-      const res = await restClient.get<{ data: Array<{ id: string; name: string; status: string }> }>('/api/skills')
+      const res = await restClient.get<{ data: Array<{ id: string; name: string; status: string; metadata?: { installRef?: string } }> }>('/api/skills')
       const skills = res.data || []
       setInstalledSkillNames(new Set(skills.map(s => s.name.toLowerCase())))
-      setSkillStatusMap(new Map(skills.map(s => [s.name.toLowerCase(), { id: s.id, status: s.status }])))
+      // Key by installRef (unique per author) with fallback to name
+      const map = new Map<string, { id: string; status: string }>()
+      for (const s of skills) {
+        const ref = s.metadata?.installRef?.toLowerCase()
+        if (ref) map.set(ref, { id: s.id, status: s.status })
+        map.set(s.name.toLowerCase(), { id: s.id, status: s.status })
+      }
+      setSkillStatusMap(map)
     } catch { /* ignore */ }
   }, [])
 
@@ -1328,10 +1347,11 @@ export function Tools() {
 
   // Mark marketplace skills as installed if they exist in the org's skill catalog
   const markedMarketplace = marketplaceSkills.map(t => {
-    const info = skillStatusMap.get(t.name.toLowerCase())
+    // For marketplace skills, match ONLY by installRef (unique per author/repo)
+    const info = t.installRef ? skillStatusMap.get(t.installRef.toLowerCase()) : undefined
     return {
       ...t,
-      installed: installedSkillNames.has(t.name.toLowerCase()) && info?.status === 'active',
+      installed: !!info && info.status === 'active',
       skillStatus: info?.status,
       skillId: info?.id,
     }
@@ -1345,10 +1365,11 @@ export function Tools() {
 
   // Mark search results as installed too
   const markedSearchResults = marketSearchResults.map(t => {
-    const info = skillStatusMap.get(t.name.toLowerCase())
+    // For marketplace skills, match ONLY by installRef
+    const info = t.installRef ? skillStatusMap.get(t.installRef.toLowerCase()) : undefined
     return {
       ...t,
-      installed: installedSkillNames.has(t.name.toLowerCase()) && info?.status === 'active',
+      installed: !!info && info.status === 'active',
       skillStatus: info?.status,
       skillId: info?.id,
     }
@@ -1484,7 +1505,7 @@ export function Tools() {
                 <ToolCard
                   tool={tool}
                   installing={installingId === tool.id}
-                  onInstall={tool.source === 'marketplace' && !tool.installed ? handleInstall : undefined}
+                  onInstall={tool.source === 'marketplace' && (!tool.installed || tool.skillStatus === 'scan_failed') ? handleInstall : undefined}
                 />
               </div>
             ))}

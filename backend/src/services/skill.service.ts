@@ -35,6 +35,7 @@ export interface SkillSummary {
   status: string;
   hash_id: string;
   s3_prefix: string;
+  metadata: unknown;
 }
 
 export interface SkillForRuntime {
@@ -61,7 +62,7 @@ export class SkillService {
     return skills.map(s => ({
       id: s.id, name: s.name, display_name: s.display_name,
       description: s.description, version: s.version, status: s.status,
-      hash_id: s.hash_id, s3_prefix: s.s3_prefix,
+      hash_id: s.hash_id, s3_prefix: s.s3_prefix, metadata: s.metadata,
     }));
   }
 

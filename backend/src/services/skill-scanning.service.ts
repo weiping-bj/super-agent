@@ -299,8 +299,21 @@ export async function scanSkill(
 }
 
 export function triggerAsyncScan(skillId: string, scanTypes?: ScanType[]): void {
-  scanSkill(skillId, scanTypes).catch(err => {
+  // 10-minute timeout for the entire scan
+  const SCAN_TIMEOUT_MS = 10 * 60 * 1000;
+
+  const timeoutPromise = new Promise<ScanResult[]>((_, reject) => {
+    setTimeout(() => reject(new Error('Scan timed out after 10 minutes')), SCAN_TIMEOUT_MS);
+  });
+
+  Promise.race([scanSkill(skillId, scanTypes), timeoutPromise]).catch(async (err) => {
     console.error(`[skill-scanning] Async scan failed for skill ${skillId}:`, err);
+    try {
+      await prisma.skills.update({ where: { id: skillId }, data: { status: 'scan_failed' } });
+      console.log(`[skill-scanning] Skill ${skillId} marked as scan_failed`);
+    } catch (updateErr) {
+      console.error(`[skill-scanning] Failed to mark skill as scan_failed:`, updateErr);
+    }
   });
 }
 
