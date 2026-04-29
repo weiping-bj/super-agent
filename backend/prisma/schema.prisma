@@ -257,12 +257,13 @@ model skills {
   created_at        DateTime @default(now()) @db.Timestamptz
   updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
 
-  organization       organizations        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  parent_skill       skills?              @relation("SkillFork", fields: [parent_skill_id], references: [id], onDelete: SetNull)
-  forked_copies      skills[]             @relation("SkillFork")
-  agent_skills       agent_skills[]
-  skill_marketplace  skill_marketplace[]
-  skill_group_access skill_group_access[]
+  organization        organizations         @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  parent_skill        skills?               @relation("SkillFork", fields: [parent_skill_id], references: [id], onDelete: SetNull)
+  forked_copies       skills[]              @relation("SkillFork")
+  agent_skills        agent_skills[]
+  skill_marketplace   skill_marketplace[]
+  skill_group_access  skill_group_access[]
+  skill_scan_results  skill_scan_results[]
 
   @@unique([organization_id, hash_id], name: "unique_skill_hash_per_org")
   @@unique([organization_id, name], name: "unique_skill_name_per_org")
@@ -2013,4 +2014,25 @@ model business_hours {
 
   @@index([organization_id])
   @@index([is_active])
+}
+
+// ============================================================================
+// Skill Scan Results Table - LLM-powered security/compliance scanning
+// ============================================================================
+model skill_scan_results {
+  id          String   @id @default(uuid()) @db.Uuid
+  skill_id    String   @db.Uuid
+  scan_type   String   @db.VarChar(32) // security | compliance | compatibility | license
+  status      String   @default("pending") @db.VarChar(20) // pending | running | passed | warning | failed
+  score       Float    @default(0)
+  findings    Json     @default("[]")
+  summary     String?
+  scanned_at  DateTime @default(now()) @db.Timestamptz
+
+  skill skills @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+
+  @@index([skill_id])
+  @@index([scan_type])
+  @@index([scanned_at(sort: Desc)])
+  @@index([skill_id, scan_type])
 }

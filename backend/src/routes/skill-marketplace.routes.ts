@@ -9,6 +9,7 @@ import { chatService } from '../services/chat.service.js';
 import { workspaceManager } from '../services/workspace-manager.js';
 import { skillService } from '../services/skill.service.js';
 import { authenticate } from '../middleware/auth.js';
+import { triggerAsyncScan } from '../services/skill-scanning.service.js';
 
 interface SearchQuery { Querystring: { q: string } }
 interface DetailQuery { Querystring: { ref: string } }
@@ -206,6 +207,9 @@ export async function skillMarketplaceRoutes(fastify: FastifyInstance): Promise<
       }
     }
 
+    // Trigger async security scan (fire-and-forget, never blocks install)
+    triggerAsyncScan(result.skillId);
+
     return reply.status(201).send({ data: result });
   });
 
@@ -250,6 +254,9 @@ export async function skillMarketplaceRoutes(fastify: FastifyInstance): Promise<
       });
     }
 
+    // Trigger async security scan (fire-and-forget, never blocks install)
+    triggerAsyncScan(result.skillId);
+
     return reply.status(201).send({ data: result });
   });
 
@@ -280,6 +287,11 @@ export async function skillMarketplaceRoutes(fastify: FastifyInstance): Promise<
         fileName,
         userId: request.user!.id,
       });
+
+      // Trigger async security scan for each installed skill
+      for (const skill of result.skills) {
+        triggerAsyncScan(skill.skillId);
+      }
 
       return reply.status(201).send({ data: result });
     } catch (err) {

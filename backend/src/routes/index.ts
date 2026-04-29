@@ -46,6 +46,7 @@ import { healthRoutes } from './health.routes.js';
 import { authRoutes } from './auth.routes.js';
 import { skillsRoutes } from './skills.routes.js';
 import { skillMarketplaceRoutes } from './skill-marketplace.routes.js';
+import { skillScanningRoutes } from './skill-scanning.routes.js';
 import { avatarRoutes } from './avatarRoutes.js';
 import { workshopRoutes } from './workshop.routes.js';
 import { openapiRoutes } from './openapi.routes.js';
@@ -172,6 +173,9 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // Skill Marketplace Routes (search, detail, install from skills.sh)
   await fastify.register(skillMarketplaceRoutes, { prefix: '/api/skills/marketplace' });
 
+  // Skill Scanning Routes (LLM-powered security/compliance analysis)
+  await fastify.register(skillScanningRoutes, { prefix: '/api/skills/scanning' });
+
   // Enterprise Skills Marketplace Routes (internal catalog)
   await fastify.register(enterpriseSkillsRoutes, { prefix: '/api/skills/enterprise' });
 
@@ -294,6 +298,7 @@ export {
   authRoutes,
   skillsRoutes,
   skillMarketplaceRoutes,
+  skillScanningRoutes,
   enterpriseSkillsRoutes,
   avatarRoutes,
   workshopRoutes,
