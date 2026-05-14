@@ -18,6 +18,16 @@
                        → Bedrock AgentCore Runtime (容器化 Agent)
 ```
 
+## 支持的 Region
+
+| Region | 说明 |
+|--------|------|
+| `us-east-1` | 美东（全模型可用） |
+| `us-west-2` | 美西（全模型可用） |
+| `ap-northeast-1` | 东京（部分模型不可用：DeepSeek V3、Claude 3.5 Haiku；Embedding 使用 Cohere Embed v4） |
+
+通过 `--region` 参数选择部署目标，系统自动加载对应 region 的模型配置。
+
 ## 前置条件
 
 | 工具 | 用途 |
@@ -32,14 +42,67 @@
 
 ```bash
 aws sts get-caller-identity
-aws ec2 describe-key-pairs --query "KeyPairs[].KeyName" --region us-west-2
+aws ec2 describe-key-pairs --query "KeyPairs[].KeyName" --region <your-region>
 ```
 
-## 一键部署（推荐）
+## 部署方式：使用 Graviton EC2 构建机（推荐）
+
+推荐在 AWS 上启动一台 ARM64 EC2 作为部署主机，避免本地环境差异问题（Docker buildx、凭证配置等）。
+
+### 步骤
+
+1. 在目标 region 启动一台 **t4g.small**（Ubuntu 22.04 ARM64），使用 `infra/scripts/user-data-build-machine.sh` 作为 User Data，绑定 **AdministratorAccess** IAM Role
+
+2. 等待 3-5 分钟 User Data 执行完成，通过 SSM 连接：
+   ```bash
+   aws ssm start-session --target <instance-id> --region <your-region>
+   ```
+
+3. Clone 项目并执行部署：
+   ```bash
+   git clone <repository-url>
+   cd super-agent
+   ./infra/scripts/deploy-full.sh ~/my-key.pem \
+     --stack SuperAgentProd \
+     --region ap-northeast-1 \
+     --domain app.example.com \
+     --hosted-zone-id Z01234567890ABC
+   ```
+
+### 优势
+
+- Docker build 无需交叉编译（机器本身是 ARM64，和目标 EC2 架构一致）
+- push 到 ECR 走 AWS 内网，速度快
+- 不依赖本地 Docker Desktop / Colima / buildx 配置
+- IAM Role 认证，无需配置 AK/SK
+
+部署完成后可以 terminate 这台构建机。
+
+---
+
+## 本地部署（备选）
+
+如果从本地 Mac/Linux 执行部署，需满足以下前置条件。
+
+### 无域名部署（最简方式）
+
+不需要域名和 CloudFront，前端通过 EC2 Nginx 直接提供：
+
+```bash
+cd /path/to/super-agent
+
+./infra/scripts/deploy-full.sh ~/Downloads/my-key.pem \
+  --stack SuperAgentProd \
+  --region ap-northeast-1
+```
+
+部署完成后通过 EC2 公网 IP 访问（HTTP）。部署脚本会输出访问地址。
 
 ### 带自定义域名（CloudFront CDN）
 
-需要 Route53 托管的域名。查找 hosted zone ID：
+需要 Route53 托管的域名。启用后提供 HTTPS + 全球 CDN 加速。
+
+查找 hosted zone ID：
 
 ```bash
 aws route53 list-hosted-zones --query "HostedZones[].{Name:Name,Id:Id}" --output table
@@ -52,7 +115,7 @@ cd /path/to/super-agent
 
 ./infra/scripts/deploy-full.sh ~/Downloads/my-key.pem \
   --stack SuperAgentProd \
-  --region us-west-2 \
+  --region ap-northeast-1 \
   --domain app.example.com \
   --hosted-zone-id Z01234567890ABC
 ```
@@ -61,7 +124,7 @@ cd /path/to/super-agent
 
 ```bash
 --stack <name>          # Stack 名称（默认 SuperAgent），不同 stack 完全隔离
---region <region>       # AWS Region（默认 us-west-2）
+--region <region>       # AWS Region（默认 us-west-2，支持 us-east-1/us-west-2/ap-northeast-1）
 --bedrock-api-key <key> # Bedrock API Key / Bearer Token（推荐，优先于 AK/SK）
 --bedrock-ak <key>      # 跨账号 Bedrock AK（当未提供 --bedrock-api-key 时生效）
 --bedrock-sk <secret>   # 跨账号 Bedrock SK（当未提供 --bedrock-api-key 时生效）
@@ -171,7 +234,7 @@ sudo bash /path/to/infra/scripts/setup-litellm.sh
 
 ```bash
 # 通过 SSM 连接
-aws ssm start-session --target <InstanceId> --region us-west-2
+aws ssm start-session --target <InstanceId> --region <your-region>
 
 # 后端日志
 tail -f /opt/super-agent/logs/backend.log
@@ -213,9 +276,9 @@ sudo systemctl restart backend
 ```bash
 cd agentcore
 docker buildx build --platform linux/arm64 \
-  -t <ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/super-agent-agentcore:latest \
+  -t <ACCOUNT_ID>.dkr.ecr.<your-region>.amazonaws.com/super-agent-agentcore:latest \
   --load .
-docker push <ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/super-agent-agentcore:latest
+docker push <ACCOUNT_ID>.dkr.ecr.<your-region>.amazonaws.com/super-agent-agentcore:latest
 
 # 通知 AgentCore 拉取新镜像（⚠️ --environment-variables 是全量替换，必须传完整）
 # 若使用 Bedrock API Key（推荐），在下面的 JSON 中追加：
@@ -225,20 +288,24 @@ docker push <ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/super-agent-agentcore:l
 # 前两个覆盖 AWS SDK 和 Claude CLI 的不同识别路径；最后一个强制 SDK 把 bearer
 # 排到 SigV4 之前，否则容器里的 SDK 会先通过 IMDS/execution-role 拿到 SigV4
 # 凭证，直接抢先成功，API Key 会被静默忽略。
+#
+# ANTHROPIC_MODEL 需要根据部署 region 选择正确的 inference profile ID：
+#   us-east-1 / us-west-2:  us.anthropic.claude-opus-4-6-v1
+#   ap-northeast-1:         global.anthropic.claude-opus-4-6-v1
 aws bedrock-agentcore-control update-agent-runtime \
   --agent-runtime-id <runtime-id> \
   --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"<ECR_URI>:latest"}}' \
   --role-arn "arn:aws:iam::<ACCOUNT_ID>:role/super-agent-agentcore-execution-role" \
   --network-configuration '{"networkMode":"PUBLIC"}' \
-  --environment-variables '{"CLAUDE_CODE_USE_BEDROCK":"1","ANTHROPIC_MODEL":"us.anthropic.claude-opus-4-6-v1","AWS_REGION":"us-west-2","WORKSPACE_S3_REGION":"us-west-2"}' \
-  --region us-west-2
+  --environment-variables '{"CLAUDE_CODE_USE_BEDROCK":"1","ANTHROPIC_MODEL":"<model-profile-id>","AWS_REGION":"<your-region>","WORKSPACE_S3_REGION":"<your-region>"}' \
+  --region <your-region>
 ```
 
 ## 销毁环境
 
 ```bash
 cd infra
-npx cdk destroy -c stackName=SuperAgentProd --region us-west-2 --force
+npx cdk destroy -c stackName=SuperAgentProd --region <your-region> --force
 ```
 
 CDK destroy 后需要手动清理：
@@ -249,11 +316,22 @@ aws s3 rb s3://<avatar-bucket-name> --force
 aws s3 rb s3://<skills-bucket-name> --force
 
 # AgentCore 资源（不在 CDK 管理范围）
-aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id <id> --region us-west-2
-aws ecr delete-repository --repository-name super-agent-agentcore --force --region us-west-2
+aws bedrock-agentcore-control delete-agent-runtime --agent-runtime-id <id> --region <your-region>
+aws ecr delete-repository --repository-name super-agent-agentcore --force --region <your-region>
 aws iam delete-role-policy --role-name super-agent-agentcore-role-<StackName> --policy-name agentcore-permissions-<StackName>
 aws iam delete-role --role-name super-agent-agentcore-role-<StackName>
 ```
+
+## 东京 Region 部署注意事项
+
+部署到 `ap-northeast-1` 时的特殊说明：
+
+- **Bedrock Model Access**：需在 AWS Console → Bedrock → Model access (ap-northeast-1) 中申请开通 Claude、Nova、Cohere Embed v4 等模型
+- **Embedding 模型**：自动使用 `global.cohere.embed-v4:0`（Nova 2 Multimodal Embeddings 在东京不可用）
+- **DeepSeek V3**：东京不可用，LLM Proxy 模型列表中自动标记为不可用
+- **Claude 3.5 Haiku**：东京不可用，自动回退到 Claude Haiku 4.5
+- **AgentCore**：API 端点已在东京部署，但需确认目标账号已配置相应 IAM 权限。如不可用，设置 `AGENT_RUNTIME=claude` 使用本地 Claude Agent SDK 模式
+- **已有向量数据**：如从其他 region 迁移，embedding 模型不同，已有向量数据需要重新索引
 
 ## 已知注意事项
 

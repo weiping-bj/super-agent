@@ -188,6 +188,8 @@ export interface ChatCompletionChunk {
 // Model Mapping
 // ============================================================================
 
+import { getRegionModels } from '../../config/region-models.js';
+
 export interface ModelMapping {
   openaiModelId: string;
   bedrockModelId: string;
@@ -198,6 +200,7 @@ export interface ModelInfo {
   bedrockModelId: string;
   provider: string;
   displayName: string;
+  available: boolean;
   capabilities: {
     vision: boolean;
     toolUse: boolean;
@@ -208,53 +211,61 @@ export interface ModelInfo {
   protocols: ('chat_completions' | 'messages')[];
 }
 
+const regionModels = getRegionModels();
+
 export const MODEL_CATALOG: ModelInfo[] = [
   // ---- Anthropic Claude ----
   {
     id: 'claude-opus-4-5',
-    bedrockModelId: 'us.anthropic.claude-opus-4-5-20251101-v1:0',
+    bedrockModelId: regionModels.claudeOpus45,
     provider: 'anthropic',
     displayName: 'Claude Opus 4.5',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: true },
     protocols: ['chat_completions', 'messages'],
   },
   {
     id: 'claude-opus-4-6',
-    bedrockModelId: 'us.anthropic.claude-opus-4-6-v1',
+    bedrockModelId: regionModels.claudeOpus46,
     provider: 'anthropic',
     displayName: 'Claude Opus 4.6',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: true },
     protocols: ['chat_completions', 'messages'],
   },
   {
     id: 'claude-sonnet-4-5',
-    bedrockModelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    bedrockModelId: regionModels.claudeSonnet45,
     provider: 'anthropic',
     displayName: 'Claude Sonnet 4.5',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: true },
     protocols: ['chat_completions', 'messages'],
   },
   {
     id: 'claude-sonnet-4-6',
-    bedrockModelId: 'us.anthropic.claude-sonnet-4-6-v1',
+    bedrockModelId: regionModels.claudeSonnet46,
     provider: 'anthropic',
     displayName: 'Claude Sonnet 4.6',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: true },
     protocols: ['chat_completions', 'messages'],
   },
   {
     id: 'claude-haiku-4-5',
-    bedrockModelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    bedrockModelId: regionModels.claudeHaiku45,
     provider: 'anthropic',
     displayName: 'Claude Haiku 4.5',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions', 'messages'],
   },
   {
     id: 'claude-3-5-haiku',
-    bedrockModelId: 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+    bedrockModelId: regionModels.claude35Haiku ?? regionModels.claudeHaiku45,
     provider: 'anthropic',
     displayName: 'Claude 3.5 Haiku',
+    available: regionModels.claude35Haiku !== null,
     capabilities: { vision: false, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions', 'messages'],
   },
@@ -264,6 +275,7 @@ export const MODEL_CATALOG: ModelInfo[] = [
     bedrockModelId: 'moonshotai.kimi-k2.5',
     provider: 'moonshot',
     displayName: 'Kimi K2.5',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions'],
   },
@@ -273,6 +285,7 @@ export const MODEL_CATALOG: ModelInfo[] = [
     bedrockModelId: 'zai.glm-4.7',
     provider: 'zhipu',
     displayName: 'GLM 4.7',
+    available: true,
     capabilities: { vision: false, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions'],
   },
@@ -281,40 +294,44 @@ export const MODEL_CATALOG: ModelInfo[] = [
     bedrockModelId: 'zai.glm-4.7-flash',
     provider: 'zhipu',
     displayName: 'GLM 4.7 Flash',
+    available: true,
     capabilities: { vision: false, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions'],
   },
   // ---- DeepSeek ----
   {
     id: 'deepseek-v3.2',
-    bedrockModelId: 'deepseek.deepseek-v3-0324-v1:0',
+    bedrockModelId: regionModels.deepseek ?? 'deepseek.deepseek-v3-0324-v1:0',
     provider: 'deepseek',
     displayName: 'DeepSeek V3.2',
+    available: regionModels.deepseek !== null,
     capabilities: { vision: false, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions'],
   },
   // ---- Amazon Nova ----
   {
     id: 'nova-pro',
-    bedrockModelId: 'us.amazon.nova-pro-v1:0',
+    bedrockModelId: regionModels.novaPro,
     provider: 'amazon',
     displayName: 'Amazon Nova Pro',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions'],
   },
   {
     id: 'nova-lite',
-    bedrockModelId: 'us.amazon.nova-lite-v1:0',
+    bedrockModelId: regionModels.novaLite,
     provider: 'amazon',
     displayName: 'Amazon Nova Lite',
+    available: true,
     capabilities: { vision: true, toolUse: true, streaming: true, extendedThinking: false },
     protocols: ['chat_completions'],
   },
 ];
 
-/** Quick lookup: friendly model ID → Bedrock model ID */
+/** Quick lookup: friendly model ID → Bedrock model ID (available models only) */
 export const DEFAULT_MODEL_MAPPING: Record<string, string> = Object.fromEntries(
-  MODEL_CATALOG.map((m) => [m.id, m.bedrockModelId]),
+  MODEL_CATALOG.filter((m) => m.available).map((m) => [m.id, m.bedrockModelId]),
 );
 
 export const REASONING_EFFORT_MAP: Record<string, number> = {
@@ -325,7 +342,7 @@ export const REASONING_EFFORT_MAP: Record<string, number> = {
 
 export const CACHING_UNSUPPORTED_MODELS = new Set([
   'claude-3-5-haiku',
-  'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+  ...(regionModels.claude35Haiku ? [regionModels.claude35Haiku] : [regionModels.claudeHaiku45]),
 ]);
 
 export const MODEL_CACHE_MIN_TOKENS: Record<string, number> = {

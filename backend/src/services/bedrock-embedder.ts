@@ -1,31 +1,33 @@
-/**
- * Bedrock Embedder — generates text embeddings using Amazon Nova Multimodal Embeddings.
- *
- * Model: amazon.nova-2-multimodal-embeddings-v1:0
- * Dimensions: 1024 (configurable: 256, 384, 1024, 3072)
- */
-
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { config } from '../config/index.js';
 import { createBedrockClient } from './bedrock-client.js';
+import { getRegionModels } from '../config/region-models.js';
 
-const MODEL_ID = 'amazon.nova-2-multimodal-embeddings-v1:0';
+const MODEL_ID = getRegionModels().embedding;
 const EMBEDDING_DIMENSION = 1024;
 
-// Shared Bedrock client (API Key > AK/SK > default provider chain).
 const bedrockClient: BedrockRuntimeClient = createBedrockClient({ region: config.aws.region });
 
 export async function embedText(text: string): Promise<number[]> {
+  return embedSingle(text, 'search_document');
+}
+
+export async function embedQuery(text: string): Promise<number[]> {
+  return embedSingle(text, 'search_query');
+}
+
+async function embedSingle(
+  text: string,
+  inputType: 'search_document' | 'search_query',
+): Promise<number[]> {
   const body = {
-    taskType: 'SINGLE_EMBEDDING',
-    singleEmbeddingParams: {
-      embeddingPurpose: 'GENERIC_INDEX',
-      embeddingDimension: EMBEDDING_DIMENSION,
-      text: { truncationMode: 'END', value: text.slice(0, 8000) },
-    },
+    texts: [text.slice(0, 2048)],
+    input_type: inputType,
+    embedding_types: ['float'],
+    truncate: 'END',
   };
 
   const command = new InvokeModelCommand({
@@ -38,9 +40,11 @@ export async function embedText(text: string): Promise<number[]> {
   const response = await bedrockClient.send(command);
   const result = JSON.parse(new TextDecoder().decode(response.body));
 
-  const embedding: number[] | undefined = result?.embeddings?.[0]?.embedding;
+  const embedding: number[] | undefined = result?.embeddings?.float?.[0];
   if (!embedding || embedding.length !== EMBEDDING_DIMENSION) {
-    throw new Error(`Unexpected embedding response: got ${embedding?.length ?? 0} dims, expected ${EMBEDDING_DIMENSION}`);
+    throw new Error(
+      `Unexpected embedding response: got ${embedding?.length ?? 0} dims, expected ${EMBEDDING_DIMENSION}`,
+    );
   }
 
   return embedding;

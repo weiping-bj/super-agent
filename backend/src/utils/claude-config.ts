@@ -5,15 +5,18 @@
  * for the Claude Agent SDK integration.
  */
 
+import { getRegionModels } from '../config/region-models.js';
+
 /**
  * Maps Anthropic model identifiers to their corresponding
  * AWS Bedrock model ARN-style IDs.
  */
+const models = getRegionModels();
 export const ANTHROPIC_TO_BEDROCK_MODEL_MAP: Record<string, string> = {
-  'claude-sonnet-4-5-20250929': 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-  'claude-haiku-4-5-20251001': 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  'claude-sonnet-4-6':'us.anthropic.claude-sonnet-4-6',
-  'claude-opus-4-6':'us.anthropic.claude-opus-4-6-v1'
+  'claude-sonnet-4-5-20250929': models.claudeSonnet45,
+  'claude-haiku-4-5-20251001': models.claudeHaiku45,
+  'claude-sonnet-4-6': models.claudeSonnet46,
+  'claude-opus-4-6': models.claudeOpus46,
 };
 
 /**

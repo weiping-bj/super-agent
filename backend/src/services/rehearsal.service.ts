@@ -13,12 +13,13 @@ import {
 import { prisma } from '../config/database.js';
 import { config } from '../config/index.js';
 import { createBedrockClient } from './bedrock-client.js';
+import { getRegionModels } from '../config/region-models.js';
 import { scopeMemoryRepository } from '../repositories/scope-memory.repository.js';
 import {
   businessScopeService,
 } from './businessScope.service.js';
 
-const REHEARSAL_MODEL_ID = 'us.amazon.nova-2-lite-v1:0';
+const REHEARSAL_MODEL_ID = getRegionModels().nova2Lite;
 const bedrockClient: BedrockRuntimeClient = createBedrockClient({ region: config.aws.region });
 
 // ---------------------------------------------------------------------------

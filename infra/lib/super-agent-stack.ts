@@ -87,8 +87,8 @@ export class SuperAgentStack extends cdk.Stack {
       allowAllOutbound: true,
     });
     ec2Sg.addIngressRule(
-      ec2.Peer.ipv4(allowedCidr.valueAsString),
-      ec2.Port.tcp(80), 'HTTP (redirects to HTTPS)',
+      ec2.Peer.prefixList('pl-58a04531'),
+      ec2.Port.tcp(80), 'HTTP from CloudFront only',
     );
     ec2Sg.addIngressRule(
       ec2.Peer.ipv4(allowedCidr.valueAsString),
@@ -376,7 +376,7 @@ export class SuperAgentStack extends cdk.Stack {
     const userData = ec2.UserData.forLinux();
     const userDataScript = fs.readFileSync(
       path.join(__dirname, '..', 'scripts', 'user-data.sh'), 'utf-8',
-    );
+    ).replace(/\{\{DEPLOY_REGION\}\}/g, this.region);
     userData.addCommands(userDataScript);
 
     const instance = new ec2.Instance(this, 'SuperAgentInstance', {

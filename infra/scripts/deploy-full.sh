@@ -99,15 +99,18 @@ if [ "$SKIP_CDK" = false ]; then
 
   npm install
 
-  CDK_ARGS="-c stackName=$STACK_NAME -c enableCdn=true"
+  CDK_ARGS="-c stackName=$STACK_NAME -c enableCdn=true -c region=$REGION"
   CDK_PARAMS="--parameters KeyPairName=$(basename "$SSH_KEY" .pem)"
 
   if [ -n "$DOMAIN_NAME" ] && [ -n "$HOSTED_ZONE_ID" ]; then
     CDK_ARGS="$CDK_ARGS -c domainName=$DOMAIN_NAME -c hostedZoneId=$HOSTED_ZONE_ID"
   fi
 
-  echo "  Running: npx cdk deploy $CDK_ARGS $CDK_PARAMS --region $REGION --require-approval never"
-  npx cdk deploy $CDK_ARGS $CDK_PARAMS --region "$REGION" --require-approval never
+  export CDK_DEFAULT_REGION="$REGION"
+  export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+  echo "  Region: $CDK_DEFAULT_REGION | Account: $CDK_DEFAULT_ACCOUNT"
+  echo "  Running: npx cdk deploy $CDK_ARGS $CDK_PARAMS --require-approval never"
+  npx cdk deploy $CDK_ARGS $CDK_PARAMS --require-approval never
 
   echo "  Waiting for EC2 SSM agent..."
   INSTANCE_ID=$(aws cloudformation describe-stacks \
@@ -339,7 +342,12 @@ if [ "$SKIP_AGENTCORE" = false ]; then
 
   # Build environment variables JSON.
   # Priority: BEDROCK_API_KEY (bearer token) > BEDROCK_AK/SK (SigV4) > execution role.
-  ENV_VARS="{\"CLAUDE_CODE_USE_BEDROCK\":\"1\",\"ANTHROPIC_MODEL\":\"us.anthropic.claude-opus-4-6-v1\",\"AWS_REGION\":\"$REGION\",\"WORKSPACE_S3_REGION\":\"$REGION\""
+  # Select model ID based on region
+  case "$REGION" in
+    ap-northeast-1) AGENTCORE_MODEL="global.anthropic.claude-opus-4-6-v1" ;;
+    *)              AGENTCORE_MODEL="us.anthropic.claude-opus-4-6-v1" ;;
+  esac
+  ENV_VARS="{\"CLAUDE_CODE_USE_BEDROCK\":\"1\",\"ANTHROPIC_MODEL\":\"$AGENTCORE_MODEL\",\"AWS_REGION\":\"$REGION\",\"WORKSPACE_S3_REGION\":\"$REGION\""
   if [ -n "$BEDROCK_API_KEY" ]; then
     ENV_VARS="$ENV_VARS,\"AWS_BEARER_TOKEN_BEDROCK\":\"$BEDROCK_API_KEY\",\"BEDROCK_API_KEY\":\"$BEDROCK_API_KEY\",\"AWS_AUTH_SCHEME_PREFERENCE\":\"httpBearerAuth\""
   elif [ -n "$BEDROCK_AK" ] && [ -n "$BEDROCK_SK" ]; then

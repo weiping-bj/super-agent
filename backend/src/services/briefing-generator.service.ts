@@ -2,8 +2,9 @@ import { prisma } from '../config/database.js';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { config } from '../config/index.js';
 import { createBedrockClient } from './bedrock-client.js';
+import { getRegionModels } from '../config/region-models.js';
 
-const HAIKU_MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
+const HAIKU_MODEL_ID = getRegionModels().claudeHaiku45;
 
 const bedrockClient: BedrockRuntimeClient = createBedrockClient({ region: config.aws.region });
 

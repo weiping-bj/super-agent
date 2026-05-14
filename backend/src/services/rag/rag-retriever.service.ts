@@ -6,7 +6,7 @@
  */
 
 import { prisma } from '../../config/database.js';
-import { embedText } from '../bedrock-embedder.js';
+import { embedQuery } from '../bedrock-embedder.js';
 
 export interface RAGResult {
   chunkId: string;
@@ -40,7 +40,7 @@ export class RagRetrieverService {
     const groupIds = assignments.map(a => a.document_group_id);
 
     // Embed the query
-    const embedding = await embedText(query);
+    const embedding = await embedQuery(query);
     const vecLiteral = `[${embedding.join(',')}]`;
 
     // Build placeholders for group IDs: $3, $4, $5, ...

@@ -26,6 +26,7 @@ set -euo pipefail
 # =============================================================================
 
 MASTER_KEY="${LITELLM_MASTER_KEY:-sk-CHANGE-ME-GENERATE-A-REAL-KEY}"
+REGION="${AWS_REGION:-us-west-2}"
 
 echo ">>> [1/7] Installing LiteLLM..."
 mkdir -p /opt/litellm
@@ -42,7 +43,21 @@ echo ">>> LiteLLM and prisma installed"
 # =========================================================================
 echo ">>> [2/7] Writing config.yaml..."
 
-cat > /opt/litellm/config.yaml << 'EOF'
+# Determine Bedrock model IDs based on region
+case "$REGION" in
+  ap-northeast-1)
+    BEDROCK_SONNET="jp.anthropic.claude-sonnet-4-6"
+    BEDROCK_OPUS="global.anthropic.claude-opus-4-6-v1"
+    ;;
+  *)
+    BEDROCK_SONNET="us.anthropic.claude-sonnet-4-20250514-v1:0"
+    BEDROCK_OPUS="us.anthropic.claude-opus-4-6-v1"
+    ;;
+esac
+
+# NOTE: unquoted heredoc (EOF not 'EOF') — shell expands $BEDROCK_* vars.
+# Do not use $-prefixed strings in the body unless intended as shell variables.
+cat > /opt/litellm/config.yaml << EOF
 model_list:
   # -----------------------------------------------------------------------
   # Kimi K2.5 (Moonshot) — native Anthropic Messages API
@@ -73,11 +88,11 @@ model_list:
   # -----------------------------------------------------------------------
   - model_name: claude-sonnet
     litellm_params:
-      model: bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0
+      model: bedrock/${BEDROCK_SONNET}
 
   - model_name: claude-opus
     litellm_params:
-      model: bedrock/us.anthropic.claude-opus-4-6-v1
+      model: bedrock/${BEDROCK_OPUS}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -113,7 +128,7 @@ if [ ! -f /opt/litellm/.env ]; then
 LITELLM_MASTER_KEY=${MASTER_KEY}
 KIMI_API_KEY=CHANGE_ME
 ZAI_API_KEY=CHANGE_ME
-AWS_REGION=us-west-2
+AWS_REGION=${REGION}
 SERVER_ROOT_PATH=/modelservice
 DATABASE_URL=${LITELLM_DB_URL}
 ENVEOF

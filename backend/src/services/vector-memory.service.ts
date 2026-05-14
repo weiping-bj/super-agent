@@ -13,7 +13,7 @@
  */
 
 import { prisma } from '../config/database.js';
-import { embedText, EMBEDDING_DIMENSION } from './bedrock-embedder.js';
+import { embedText, embedQuery, EMBEDDING_DIMENSION } from './bedrock-embedder.js';
 
 // Similarity threshold for dedup/merge — above this, memories are considered duplicates
 const DEDUP_THRESHOLD = 0.92;
@@ -128,7 +128,7 @@ export class VectorMemoryService {
     limit = 10,
     minSimilarity = 0.5,
   ): Promise<VectorSearchResult[]> {
-    const embedding = await embedText(query);
+    const embedding = await embedQuery(query);
     const vecLiteral = `[${embedding.join(',')}]`;
 
     return prisma.$queryRawUnsafe<VectorSearchResult[]>(

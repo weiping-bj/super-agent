@@ -5,9 +5,9 @@
 
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { createBedrockClient } from './bedrock-client.js';
+import { getRegionModels } from '../config/region-models.js';
 
-// Model ID for Amazon Nova 2 Lite
-const NOVA_MODEL_ID = 'us.amazon.nova-2-lite-v1:0';
+const NOVA_MODEL_ID = getRegionModels().nova2Lite;
 
 /**
  * Suggested tool with skill definition (inspired by Claude Skills format)

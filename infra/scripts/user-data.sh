@@ -46,7 +46,7 @@ rm -f /tmp/cw-agent.deb
 mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_CONFIG'
 {
-  "agent": { "run_as_user": "root", "region": "us-west-2" },
+  "agent": { "run_as_user": "root", "region": "{{DEPLOY_REGION}}" },
   "logs": { "logs_collected": { "files": { "collect_list": [
     { "file_path": "/opt/super-agent/logs/backend.log", "log_group_name": "/super-agent/backend", "log_stream_name": "{instance_id}/backend", "retention_in_days": 30 },
     { "file_path": "/opt/super-agent/logs/backend-error.log", "log_group_name": "/super-agent/backend-errors", "log_stream_name": "{instance_id}/backend-errors", "retention_in_days": 30 },

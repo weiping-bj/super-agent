@@ -11,6 +11,7 @@
  */
 
 import { config } from '../config/index.js';
+import { getBedrockModelId } from '../utils/claude-config.js';
 import type { AgentRuntime, AgentRuntimeOptions } from './agent-runtime.js';
 import type { ConversationEvent, AgentConfig, ContentBlock, MCPServerSDKConfig } from './claude-agent.service.js';
 import type { SkillForWorkspace } from './workspace-manager.js';
@@ -130,7 +131,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       org_id: options.organizationId,
       agent_id: options.agentId,
       system_prompt: agentConfig.systemPrompt ?? undefined,
-      model: agentConfig.model ?? undefined,
+      model: agentConfig.model ? getBedrockModelId(agentConfig.model) : undefined,
       mcp_servers: serializableMcpServers,
       workspace_s3_bucket: this.workspaceBucket,
       workspace_s3_prefix: s3Prefix,
