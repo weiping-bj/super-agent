@@ -18,6 +18,15 @@ import {
 import { chatService } from './chat.service.js';
 import { chatSessionRepository, type SessionSource } from '../repositories/chat.repository.js';
 
+/** Attachment metadata for IM messages (JSON-safe, uses tempPath instead of Buffer). */
+export interface IMAttachment {
+  fileName: string;
+  mimeType: string;
+  size: number;
+  /** Absolute path to temporary file (written by adapter, read & deleted by handleMessage). */
+  tempPath: string;
+}
+
 /** Normalized message from any IM platform. */
 export interface NormalizedIMMessage {
   channelType: string;
@@ -35,6 +44,8 @@ export interface NormalizedIMMessage {
    * When false, the message routes to the binding's sticky session for context continuity.
    */
   isExplicitThread?: boolean;
+  /** File attachments downloaded by the adapter (file/image/audio). */
+  attachments?: IMAttachment[];
 }
 
 /** Adapter interface — each IM platform implements this. */
@@ -175,6 +186,39 @@ class IMService {
 
     // 2. Resolve or create session
     const { sessionId } = await this.resolveSession(binding, msg);
+
+    // 2.5 Save attachments to workspace
+    if (msg.attachments && msg.attachments.length > 0) {
+      const { readFile, rm } = await import('fs/promises');
+      const { workspaceManager } = await import('./workspace-manager.js');
+
+      const savedFiles: string[] = [];
+      for (const att of msg.attachments) {
+        try {
+          const content = await readFile(att.tempPath);
+          const written = await workspaceManager.writeWorkspaceFileRaw(
+            binding.organization_id,
+            binding.business_scope_id,
+            sessionId,
+            att.fileName,
+            content,
+          );
+          if (written) {
+            savedFiles.push(att.fileName);
+          }
+        } catch (err) {
+          console.error(`[IM] Failed to save attachment "${att.fileName}":`, err instanceof Error ? err.message : err);
+        } finally {
+          try { await rm(att.tempPath, { force: true }); } catch { /* non-critical */ }
+        }
+      }
+
+      if (savedFiles.length > 0) {
+        const fileList = savedFiles.map(f => `'${f}'`).join(', ');
+        const note = `[用户发送了文件: ${fileList}，已保存到 workspace 根目录。你可以直接用 Read 工具读取这些文件。]`;
+        msg.text = msg.text ? `${note}\n\n${msg.text}` : note;
+      }
+    }
 
     // 3. Process message through ChatService (same code path as web UI)
     // Use binding's creator as the system userId (IM platform user IDs are not UUIDs)

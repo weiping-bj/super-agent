@@ -13,11 +13,18 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk';
-import type { IMAdapter, NormalizedIMMessage } from './im.service.js';
+import { writeFile as fsWriteFile, mkdir } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
+import type { IMAdapter, NormalizedIMMessage, IMAttachment } from './im.service.js';
 import type { IMChannelBindingEntity } from '../repositories/im-channel.repository.js';
 import { imQueueService } from './im-queue.service.js';
 
 type FeishuDomain = 'feishu' | 'lark';
+
+const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024; // 20MB
+const SUPPORTED_MSG_TYPES = new Set(['text', 'file', 'image', 'audio', 'media']);
 
 function getApiBase(domain: FeishuDomain = 'feishu'): string {
   return domain === 'lark' ? 'https://open.larksuite.com' : 'https://open.feishu.cn';
@@ -262,25 +269,43 @@ export class FeishuAdapter implements IMAdapter {
               };
             };
 
-            if (!event.message || event.message.message_type !== 'text') return;
+            if (!event.message || !SUPPORTED_MSG_TYPES.has(event.message.message_type)) return;
             if (event.sender?.sender_type === 'bot') return;
 
-            let text: string;
-            try {
-              text = JSON.parse(event.message.content).text;
-            } catch {
-              return;
+            const conn = activeConnections.get(bindingId);
+            if (!conn) return;
+
+            const msgType = event.message.message_type;
+            let text = '';
+            let attachments: IMAttachment[] | undefined;
+
+            if (msgType === 'text') {
+              try {
+                text = JSON.parse(event.message.content).text;
+              } catch {
+                return;
+              }
+              if (!text?.trim()) return;
+              text = text.trim();
+            } else {
+              attachments = await this.parseAttachments(
+                conn.appId, conn.appSecret, conn.domain,
+                event.message.message_id,
+                msgType,
+                event.message.content,
+              );
+              if (!attachments || attachments.length === 0) return;
             }
-            if (!text?.trim()) return;
 
             const normalized: NormalizedIMMessage = {
               channelType: 'feishu',
               channelId: event.message.chat_id,
               threadId: event.message.root_id || event.message.message_id,
               userId: event.sender?.sender_id?.open_id || 'unknown',
-              text: text.trim(),
+              text,
               bindingId: bindingId,
               isExplicitThread: !!event.message.root_id,
+              attachments,
             };
 
             await imQueueService.enqueue(normalized, {
@@ -296,6 +321,109 @@ export class FeishuAdapter implements IMAdapter {
 
     activeConnections.set(bindingId, { binding, wsClient, appId, appSecret, domain });
     console.log(`[FEISHU] WSClient connected for binding ${bindingId} (domain: ${domain})`);
+  }
+
+  private async downloadMessageResource(
+    appId: string,
+    appSecret: string,
+    domain: FeishuDomain,
+    messageId: string,
+    fileKey: string,
+    resourceType: 'file' | 'image',
+  ): Promise<{ content: Buffer; contentType: string } | null> {
+    try {
+      const token = await getTenantAccessToken(appId, appSecret, domain);
+      const base = getApiBase(domain);
+      const url = `${base}/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=${resourceType}`;
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) {
+        console.error(`[FEISHU] Resource download failed: ${resp.status} ${resp.statusText}`);
+        return null;
+      }
+      const content = Buffer.from(await resp.arrayBuffer());
+      if (content.length > MAX_ATTACHMENT_SIZE) {
+        console.warn(`[FEISHU] File too large (${content.length} bytes), skipping`);
+        return null;
+      }
+      const contentType = resp.headers.get('content-type') || 'application/octet-stream';
+      return { content, contentType };
+    } catch (err) {
+      console.error(`[FEISHU] Failed to download resource:`, err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+
+  private async saveToTempFile(content: Buffer, fileName: string): Promise<string> {
+    const tempDir = join(tmpdir(), 'super-agent-im-attachments');
+    await mkdir(tempDir, { recursive: true });
+    const safeName = fileName.replace(/[/\\:*?"<>|]/g, '_');
+    const tempPath = join(tempDir, `${randomUUID()}_${safeName}`);
+    await fsWriteFile(tempPath, content);
+    return tempPath;
+  }
+
+  private async parseAttachments(
+    appId: string,
+    appSecret: string,
+    domain: FeishuDomain,
+    messageId: string,
+    messageType: string,
+    content: string,
+  ): Promise<IMAttachment[]> {
+    const attachments: IMAttachment[] = [];
+    let parsed: Record<string, string>;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return [];
+    }
+
+    if (messageType === 'file') {
+      const fileKey = parsed.file_key;
+      const fileName = parsed.file_name || `file_${fileKey}`;
+      if (!fileKey) return [];
+
+      const result = await this.downloadMessageResource(appId, appSecret, domain, messageId, fileKey, 'file');
+      if (result) {
+        const tempPath = await this.saveToTempFile(result.content, fileName);
+        attachments.push({ fileName, mimeType: result.contentType, size: result.content.length, tempPath });
+      }
+    } else if (messageType === 'image') {
+      const imageKey = parsed.image_key;
+      if (!imageKey) return [];
+
+      const result = await this.downloadMessageResource(appId, appSecret, domain, messageId, imageKey, 'image');
+      if (result) {
+        const ext = result.contentType.includes('png') ? '.png' : '.jpg';
+        const fileName = `${imageKey}${ext}`;
+        const tempPath = await this.saveToTempFile(result.content, fileName);
+        attachments.push({ fileName, mimeType: result.contentType, size: result.content.length, tempPath });
+      }
+    } else if (messageType === 'audio') {
+      const fileKey = parsed.file_key;
+      if (!fileKey) return [];
+
+      const result = await this.downloadMessageResource(appId, appSecret, domain, messageId, fileKey, 'file');
+      if (result) {
+        const fileName = `audio_${fileKey}.opus`;
+        const tempPath = await this.saveToTempFile(result.content, fileName);
+        attachments.push({ fileName, mimeType: result.contentType || 'audio/opus', size: result.content.length, tempPath });
+      }
+    } else if (messageType === 'media') {
+      const fileKey = parsed.file_key;
+      const fileName = parsed.file_name || `media_${fileKey}`;
+      if (!fileKey) return [];
+
+      const result = await this.downloadMessageResource(appId, appSecret, domain, messageId, fileKey, 'file');
+      if (result) {
+        const tempPath = await this.saveToTempFile(result.content, fileName);
+        attachments.push({ fileName, mimeType: result.contentType, size: result.content.length, tempPath });
+      }
+    }
+
+    return attachments;
   }
 
   private async discoverBindings(): Promise<IMChannelBindingEntity[]> {
