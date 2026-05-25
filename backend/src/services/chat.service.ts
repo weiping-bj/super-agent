@@ -267,6 +267,15 @@ export class ChatService {
     const allContentBlocks: ContentBlock[] = [];
 
     try {
+      // Register stream so WebUI subscribers can receive live events
+      streamRegistry.register(sessionId);
+
+      // Push user message event so WebUI shows it immediately
+      streamRegistry.push(sessionId, {
+        type: 'user_message',
+        message: options.message,
+      });
+
       const conversationGenerator = this.agentRuntime.runConversation(
         {
           agentId: agentConfig.id,
@@ -297,6 +306,8 @@ export class ChatService {
           if (event.type === 'assistant' && event.content) {
             allContentBlocks.push(...event.content);
           }
+          // Push all events to stream registry for WebUI subscribers
+          streamRegistry.push(sessionId, event);
         },
         () => { timedOut = true; },
       );
@@ -305,6 +316,7 @@ export class ChatService {
         throw new Error('Agent response timed out');
       }
     } finally {
+      streamRegistry.complete(sessionId);
       await agentStatusService.setActive(agentConfig.id, options.organizationId);
       await chatSessionRepository.updateStatus(sessionId, options.organizationId, 'idle').catch(() => {});
 
@@ -1118,6 +1130,16 @@ export class ChatService {
         case 'error':
           reply.raw.write(formatSSEEvent({
             data: JSON.stringify({ type: 'error', code: safe.code, message: safe.message, suggested_action: safe.suggestedAction }),
+          }));
+          break;
+        case 'browser_frame':
+          reply.raw.write(formatSSEEvent({
+            data: JSON.stringify({ type: 'browser_frame', screenshotData: safe.screenshotData, browserToolName: safe.browserToolName }),
+          }));
+          break;
+        case 'browser_live_view_ready':
+          reply.raw.write(formatSSEEvent({
+            data: JSON.stringify({ type: 'browser_live_view_ready', liveViewUrl: safe.liveViewUrl, sessionId: safe.sessionId, browserIdentifier: safe.browserIdentifier }),
           }));
           break;
       }

@@ -8,7 +8,7 @@
 import type { Message } from '@/types'
 import type { ContentBlock } from '@/services/chatStreamService'
 import { streamChat, type ChatStreamHandle } from '@/services/chatStreamService'
-import { restClient } from '@/services/api/restClient'
+import { restClient, getAuthToken } from '@/services/api/restClient'
 
 export interface SessionState {
   sessionId: string
@@ -16,6 +16,8 @@ export interface SessionState {
   isSending: boolean
   streamHandle: ChatStreamHandle | null
   error: string | null
+  /** Persistent subscription abort controller (for external event delivery) */
+  subscriptionAbort?: AbortController
 }
 
 type Listener = () => void
@@ -139,6 +141,14 @@ class SessionStreamManager {
           if (event.model) lastModel = event.model
           const serialized = JSON.stringify(allBlocks)
           this.updateMessage(sessionId, aiMessageId, serialized, event.speakerAgentName, event.speakerAgentAvatar)
+
+          // Detect browser tool_use early — show live view panel immediately
+          for (const block of event.content) {
+            if (block.type === 'tool_use' && block.name?.includes('start_browser_session')) {
+              window.dispatchEvent(new CustomEvent('browser-session-starting', { detail: {} }))
+              break
+            }
+          }
         },
         onResult: (event) => {
           // result event = AI response complete. Stop loading immediately
@@ -169,6 +179,16 @@ class SessionStreamManager {
           // Dispatch a custom event so Chat.tsx can open an in-app preview tab
           window.dispatchEvent(new CustomEvent('preview-ready', {
             detail: { url: event.url, name: event.name || 'Preview', appId: event.app_id },
+          }))
+        },
+        onBrowserFrame: (event) => {
+          window.dispatchEvent(new CustomEvent('browser-frame', {
+            detail: { screenshotData: event.screenshotData, browserToolName: event.browserToolName },
+          }))
+        },
+        onBrowserLiveViewReady: (event) => {
+          window.dispatchEvent(new CustomEvent('browser-live-view-ready', {
+            detail: { liveViewUrl: event.liveViewUrl, sessionId: event.sessionId, browserIdentifier: event.browserIdentifier },
           }))
         },
         onDone: () => {
@@ -303,6 +323,14 @@ class SessionStreamManager {
                     window.dispatchEvent(new CustomEvent('preview-ready', {
                       detail: { url: parsed.url, name: parsed.appName || 'Preview', appId: parsed.appId },
                     }))
+                  } else if (parsed.type === 'browser_frame' && parsed.screenshotData) {
+                    window.dispatchEvent(new CustomEvent('browser-frame', {
+                      detail: { screenshotData: parsed.screenshotData, browserToolName: parsed.browserToolName },
+                    }))
+                  } else if (parsed.type === 'browser_live_view_ready' && parsed.liveViewUrl) {
+                    window.dispatchEvent(new CustomEvent('browser-live-view-ready', {
+                      detail: { liveViewUrl: parsed.liveViewUrl, sessionId: parsed.sessionId, browserIdentifier: parsed.browserIdentifier },
+                    }))
                   }
                 } catch { /* ignore non-JSON */ }
               }
@@ -346,6 +374,137 @@ class SessionStreamManager {
     if (state) {
       state.error = null
       this.notify()
+    }
+  }
+
+  /**
+   * Open a persistent SSE subscription for a session.
+   * Receives events from any source (Feishu, API, etc.) and dispatches
+   * browser-frame / browser-live-view-ready / assistant updates.
+   */
+  openSubscription(sessionId: string): void {
+    const state = this.sessions.get(sessionId)
+    if (!state) return
+    // Already subscribed
+    if (state.subscriptionAbort) return
+
+    const abort = new AbortController()
+    state.subscriptionAbort = abort
+
+    const baseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+
+    let currentAiMessageId: string | null = null
+    let currentAiBlocks: ContentBlock[] = []
+
+    const run = async () => {
+      try {
+        const token = getAuthToken()
+        const headers: Record<string, string> = {}
+        if (token) headers['Authorization'] = `Bearer ${token}`
+
+        const response = await fetch(`${baseUrl}/api/chat/sessions/${sessionId}/subscribe`, {
+          headers,
+          signal: abort.signal,
+        })
+        if (!response.ok || !response.body) return
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6)
+            if (data === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(data)
+              if (parsed.type === 'heartbeat') continue
+
+              // Skip if WebUI is actively streaming this session (avoid duplication)
+              if (state.isSending) {
+                // Still dispatch browser events even during WebUI streaming
+                if (parsed.type === 'browser_frame' && parsed.screenshotData) {
+                  window.dispatchEvent(new CustomEvent('browser-frame', {
+                    detail: { screenshotData: parsed.screenshotData, browserToolName: parsed.browserToolName },
+                  }))
+                } else if (parsed.type === 'browser_live_view_ready' && parsed.liveViewUrl) {
+                  window.dispatchEvent(new CustomEvent('browser-live-view-ready', {
+                    detail: { liveViewUrl: parsed.liveViewUrl, sessionId: parsed.sessionId, browserIdentifier: parsed.browserIdentifier },
+                  }))
+                }
+                continue
+              }
+
+              if (parsed.type === 'user_message' && parsed.message) {
+                state.messages = [...state.messages, {
+                  id: `sub-user-${Date.now()}`,
+                  type: 'user' as const,
+                  content: parsed.message,
+                  timestamp: new Date(),
+                }]
+                currentAiMessageId = null
+                this.notify()
+              } else if (parsed.type === 'assistant' && Array.isArray(parsed.content)) {
+                if (!currentAiMessageId) {
+                  currentAiMessageId = `sub-ai-${Date.now()}`
+                  currentAiBlocks = [...parsed.content]
+                  state.messages = [...state.messages, {
+                    id: currentAiMessageId,
+                    type: 'ai' as const,
+                    content: JSON.stringify(currentAiBlocks),
+                    timestamp: new Date(),
+                  }]
+                } else {
+                  currentAiBlocks.push(...parsed.content)
+                  state.messages = state.messages.map(m =>
+                    m.id === currentAiMessageId ? { ...m, content: JSON.stringify(currentAiBlocks) } : m
+                  )
+                }
+                this.notify()
+              } else if (parsed.type === 'result') {
+                // Generation complete — reset AI tracking
+                currentAiMessageId = null
+                currentAiBlocks = []
+              } else if (parsed.type === 'browser_frame' && parsed.screenshotData) {
+                window.dispatchEvent(new CustomEvent('browser-frame', {
+                  detail: { screenshotData: parsed.screenshotData, browserToolName: parsed.browserToolName },
+                }))
+              } else if (parsed.type === 'browser_live_view_ready' && parsed.liveViewUrl) {
+                window.dispatchEvent(new CustomEvent('browser-live-view-ready', {
+                  detail: { liveViewUrl: parsed.liveViewUrl, sessionId: parsed.sessionId, browserIdentifier: parsed.browserIdentifier },
+                }))
+              }
+            } catch { /* ignore non-JSON */ }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return
+        // Reconnect after 5s on network error
+        if (!abort.signal.aborted) {
+          setTimeout(() => run(), 5000)
+        }
+      }
+    }
+
+    run()
+  }
+
+  /**
+   * Close the persistent subscription for a session.
+   */
+  closeSubscription(sessionId: string): void {
+    const state = this.sessions.get(sessionId)
+    if (state?.subscriptionAbort) {
+      state.subscriptionAbort.abort()
+      state.subscriptionAbort = undefined
     }
   }
 }

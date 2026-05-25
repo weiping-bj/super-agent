@@ -8,7 +8,11 @@
  *   - Stop hook: full diff sync to S3 as safety net
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk'; 
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import {
+  BedrockAgentCoreClient,
+  GetBrowserSessionCommand,
+} from '@aws-sdk/client-bedrock-agentcore';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { syncWorkspaceToS3 } from './workspace-sync.js';
 import fs from 'fs';
@@ -21,7 +25,7 @@ const DEFAULT_TOOLS = [
   'TodoWrite', 'ToolSearch', 'NotebookEdit',
 ];
 
-const s3 = new S3Client({ region: process.env.WORKSPACE_S3_REGION ?? 'us-east-1' });
+const s3 = new S3Client({ region: process.env.WORKSPACE_S3_REGION ?? 'ap-northeast-1' });
 
 // ---------------------------------------------------------------------------
 // SDK Hooks for S3 sync (replaces file-watcher.ts)
@@ -338,6 +342,9 @@ async function* runWithOptions(
   prompt: string,
   options: Record<string, unknown>,
 ): AsyncGenerator<AgentEvent> {
+  const seenBrowserSessions = new Set<string>();
+  const browserSessionCounts = new Map<string, number>();
+
   for await (const message of query({ prompt, options })) {
     const msg = message as Record<string, unknown>;
 
@@ -361,6 +368,15 @@ async function* runWithOptions(
         session_id: msg.session_id as string | undefined,
         model,
       };
+
+      // Check for browser tool_use blocks and extract live view URL
+      const liveViewEvent = await extractLiveViewFromAssistant(
+        blocks, seenBrowserSessions, browserSessionCounts
+      );
+      if (liveViewEvent) {
+        yield liveViewEvent;
+      }
+
       continue;
     }
 
@@ -452,4 +468,82 @@ function mapContentBlock(block: Record<string, unknown>): ContentBlock {
     default:
       return block as unknown as ContentBlock;
   }
+}
+
+/**
+ * Check assistant content blocks for live_view_url from start_browser_session result.
+ * The MCP server returns live_view_url directly in the tool response.
+ */
+async function extractLiveViewFromAssistant(
+  blocks: ContentBlock[],
+  seenSessions: Set<string>,
+  sessionCounts: Map<string, number>,
+): Promise<AgentEvent | null> {
+  for (const block of blocks) {
+    const content = block.content ?? block.text ?? '';
+    const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
+
+    if (contentStr.includes('live_view_url')) {
+      try {
+        const jsonMatch = contentStr.match(/\{[^{}]*"live_view_url"\s*:\s*"[^"]+?"[^{}]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.live_view_url && parsed.session_id) {
+            if (seenSessions.has(parsed.session_id)) continue;
+            seenSessions.add(parsed.session_id);
+            return {
+              type: 'browser_live_view_ready',
+              sessionId: parsed.session_id,
+              liveViewUrl: parsed.live_view_url,
+              browserIdentifier: parsed.browser_identifier ?? 'aws.browser.v1',
+            } as AgentEvent;
+          }
+        }
+        const fullParsed = JSON.parse(contentStr);
+        if (fullParsed.live_view_url && fullParsed.session_id) {
+          if (seenSessions.has(fullParsed.session_id)) continue;
+          seenSessions.add(fullParsed.session_id);
+          return {
+            type: 'browser_live_view_ready',
+            sessionId: fullParsed.session_id,
+            liveViewUrl: fullParsed.live_view_url,
+            browserIdentifier: fullParsed.browser_identifier ?? 'aws.browser.v1',
+          } as AgentEvent;
+        }
+      } catch { /* not parseable, skip */ }
+    }
+
+    // Extract live_view_url from raw text using regex
+    if (contentStr.includes('bedrock-agentcore') && contentStr.includes('/live-view')) {
+      const urlMatch = contentStr.match(/(https:\/\/bedrock-agentcore[^\s"',]+\/live-view)/);
+      const sessionMatch = contentStr.match(/"?session_id"?\s*[:=]\s*"?([0-9A-Z]+)"?/i)
+        ?? contentStr.match(/sessions\/([0-9A-Z]+)\//i);
+      if (urlMatch && sessionMatch) {
+        const sessionId = sessionMatch[1];
+        if (!seenSessions.has(sessionId)) {
+          seenSessions.add(sessionId);
+          return {
+            type: 'browser_live_view_ready',
+            sessionId,
+            liveViewUrl: urlMatch[1],
+            browserIdentifier: 'aws.browser.v1',
+          } as AgentEvent;
+        }
+      }
+    }
+
+    // Track tool_use for session counting
+    if (block.type === 'tool_use' && block.name) {
+      const bare = block.name.includes('__') ? block.name.split('__').pop()! : block.name;
+      if (bare.startsWith('browser_')) {
+        const input = block.input as Record<string, unknown> | undefined;
+        const sessionId = input?.session_id as string | undefined;
+        if (sessionId) {
+          const count = (sessionCounts.get(sessionId) ?? 0) + 1;
+          sessionCounts.set(sessionId, count);
+        }
+      }
+    }
+  }
+  return null;
 }

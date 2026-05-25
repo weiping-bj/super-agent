@@ -49,7 +49,7 @@ export interface TokenUsage {
 }
 
 export interface AgentEvent {
-  type: 'session_start' | 'assistant' | 'result' | 'error';
+  type: 'session_start' | 'assistant' | 'result' | 'error' | 'browser_live_view_ready';
   session_id?: string;
   content?: ContentBlock[];
   model?: string;
@@ -60,4 +60,8 @@ export interface AgentEvent {
   is_error?: boolean;
   result?: string;
   token_usage?: TokenUsage;
+  /** Browser live view fields */
+  sessionId?: string;
+  liveViewUrl?: string;
+  browserIdentifier?: string;
 }

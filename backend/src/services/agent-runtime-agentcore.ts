@@ -22,7 +22,7 @@ import { join, relative, dirname } from 'path';
 import { pipeline } from 'stream/promises';
 
 interface AgentCoreEvent {
-  type: 'session_start' | 'assistant' | 'result' | 'error';
+  type: 'session_start' | 'assistant' | 'result' | 'error' | 'browser_live_view_ready';
   session_id?: string;
   content?: Array<{
     type: string;
@@ -41,6 +41,9 @@ interface AgentCoreEvent {
   num_turns?: number;
   is_error?: boolean;
   result?: string;
+  sessionId?: string;
+  liveViewUrl?: string;
+  browserIdentifier?: string;
 }
 
 export class AgentCoreAgentRuntime implements AgentRuntime {
@@ -130,7 +133,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       scope_id: scopeId,
       org_id: options.organizationId,
       agent_id: options.agentId,
-      system_prompt: agentConfig.systemPrompt ?? undefined,
+      system_prompt: this.buildSystemPromptWithBrowserRegion(agentConfig.systemPrompt),
       model: agentConfig.model ? getBedrockModelId(agentConfig.model) : undefined,
       mcp_servers: serializableMcpServers,
       workspace_s3_bucket: this.workspaceBucket,
@@ -453,6 +456,7 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
 
   private async *parseSSEStream(stream: any): AsyncGenerator<ConversationEvent> {
     let buffer = '';
+    const seenBrowserSessions = new Set<string>();
     const iterable = stream[Symbol.asyncIterator]
       ? stream
       : stream.transformToByteArray ? [await stream.transformToByteArray()] : [stream];
@@ -466,7 +470,19 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
           if (!line.startsWith('data: ')) continue;
           const data = line.slice(6).trim();
           if (!data || data === '[DONE]') continue;
-          try { yield this.mapEvent(JSON.parse(data)); } catch { /* skip */ }
+          try {
+            const parsed = JSON.parse(data);
+            const event = this.mapEvent(parsed);
+            yield event;
+            const browserFrame = this.extractBrowserFrame(parsed);
+            if (browserFrame) {
+              yield browserFrame;
+            }
+            const liveViewEvent = await this.extractBrowserLiveView(parsed, seenBrowserSessions);
+            if (liveViewEvent) {
+              yield liveViewEvent;
+            }
+          } catch { /* skip */ }
         }
       }
     }
@@ -475,9 +491,175 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6).trim();
         if (!data || data === '[DONE]') continue;
-        try { yield this.mapEvent(JSON.parse(data)); } catch { /* skip */ }
+        try {
+          const parsed = JSON.parse(data);
+          const event = this.mapEvent(parsed);
+          yield event;
+          const browserFrame = this.extractBrowserFrame(parsed);
+          if (browserFrame) {
+            yield browserFrame;
+          }
+          const liveViewEvent = await this.extractBrowserLiveView(parsed, seenBrowserSessions);
+          if (liveViewEvent) {
+            yield liveViewEvent;
+          }
+        } catch { /* skip */ }
       }
     }
+  }
+
+  /**
+   * Detect browser tool screenshots in assistant events.
+   */
+  private extractBrowserFrame(event: AgentCoreEvent): ConversationEvent | null {
+    if (event.type !== 'assistant' || !event.content) return null;
+
+    function isBrowserTool(name: string): boolean {
+      const bare = name.includes('__') ? name.split('__').pop()! : name;
+      return bare.startsWith('browser_');
+    }
+
+    let lastBrowserToolName: string | undefined;
+
+    for (const block of event.content) {
+      if (block.type === 'tool_use' && block.name && isBrowserTool(block.name)) {
+        lastBrowserToolName = block.name;
+      }
+
+      if (block.type === 'tool_result' && block.content) {
+        const content = typeof block.content === 'string' ? block.content : '';
+        let screenshotData: string | null = null;
+
+        const dataUriMatch = content.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/);
+        if (dataUriMatch) {
+          screenshotData = dataUriMatch[0];
+        }
+
+        if (!screenshotData) {
+          try {
+            const parsed = JSON.parse(content);
+            const imgField = parsed.screenshot || parsed.image || parsed.base64_image || parsed.data;
+            if (typeof imgField === 'string' && imgField.length > 100) {
+              if (imgField.startsWith('data:image/')) {
+                screenshotData = imgField;
+              } else if (imgField.startsWith('iVBOR') || imgField.startsWith('/9j/')) {
+                screenshotData = `data:image/png;base64,${imgField}`;
+              }
+            }
+          } catch { /* not JSON */ }
+        }
+
+        if (screenshotData) {
+          return {
+            type: 'browser_frame',
+            screenshotData,
+            browserToolName: lastBrowserToolName,
+          } as ConversationEvent;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect browser session IDs in tool_use events and fetch the DCV live view URL.
+   */
+  private async extractBrowserLiveView(
+    event: AgentCoreEvent,
+    seenSessions: Set<string>
+  ): Promise<ConversationEvent | null> {
+    if (event.type !== 'assistant' || !event.content) return null;
+
+    for (const block of event.content) {
+      // Strategy 1: Check tool_result blocks for live_view_url from start_browser_session
+      if (block.type === 'tool_result') {
+        const content = typeof block.content === 'string' ? block.content : '';
+        if (content.includes('live_view_url')) {
+          try {
+            const jsonMatch = content.match(/\{[^{}]*"live_view_url"\s*:\s*"[^"]+?"[^{}]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (parsed.live_view_url && parsed.session_id && !seenSessions.has(parsed.session_id + ':done')) {
+                seenSessions.add(parsed.session_id);
+                seenSessions.add(parsed.session_id + ':done');
+
+                try {
+                  const { browserLiveViewService } = await import('./browser-live-view.service.js');
+                  const result = await browserLiveViewService.getLiveViewUrl(parsed.session_id);
+                  console.log(`[agentcore-runtime] Browser live view ready (from tool_result): session=${parsed.session_id}`);
+                  return {
+                    type: 'browser_live_view_ready',
+                    sessionId: parsed.session_id,
+                    liveViewUrl: result.liveViewUrl,
+                    browserIdentifier: result.browserIdentifier,
+                  };
+                } catch {
+                  console.log(`[agentcore-runtime] Browser live view ready (unsigned): session=${parsed.session_id}`);
+                  return {
+                    type: 'browser_live_view_ready',
+                    sessionId: parsed.session_id,
+                    liveViewUrl: parsed.live_view_url,
+                    browserIdentifier: parsed.browser_identifier ?? 'aws.browser.v1',
+                  };
+                }
+              }
+            }
+          } catch { /* not parseable */ }
+        }
+      }
+
+      // Strategy 2: Fallback — detect tool_use with session_id and call GetBrowserSession
+      if (block.type !== 'tool_use' || !block.name) continue;
+      const bare = block.name.includes('__') ? block.name.split('__').pop()! : block.name;
+      if (!bare.startsWith('browser_')) continue;
+
+      const input = block.input as Record<string, unknown> | undefined;
+      const browserSessionId = input?.session_id as string | undefined;
+      if (!browserSessionId) continue;
+
+      if (seenSessions.has(browserSessionId + ':done')) continue;
+
+      const key = browserSessionId;
+      if (!seenSessions.has(key)) {
+        seenSessions.add(key);
+        continue;
+      }
+      seenSessions.add(key + ':done');
+
+      try {
+        const { browserLiveViewService } = await import('./browser-live-view.service.js');
+        const result = await browserLiveViewService.getLiveViewUrl(browserSessionId);
+        console.log(`[agentcore-runtime] Browser live view ready (fallback): session=${browserSessionId}`);
+        return {
+          type: 'browser_live_view_ready',
+          sessionId: browserSessionId,
+          liveViewUrl: result.liveViewUrl,
+          browserIdentifier: result.browserIdentifier,
+        };
+      } catch (err) {
+        console.warn(
+          `[agentcore-runtime] Failed to get browser live view URL for session ${browserSessionId}:`,
+          err instanceof Error ? err.message : err
+        );
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  private buildSystemPromptWithBrowserRegion(basePrompt: string | null | undefined): string | undefined {
+    const arnRegion = config.agentcore.runtimeArn?.split(':')[3];
+    const browserRegion = arnRegion || config.aws?.region || 'ap-northeast-1';
+    const browserInstruction = `\n\nIMPORTANT BROWSER RULES:
+1. When calling start_browser_session, always include the parameter "region": "${browserRegion}".
+2. After start_browser_session succeeds, silently wait 10 seconds using Bash \`sleep 10\` before calling any other browser tool. Do NOT mention this wait to the user — just do it silently.`;
+
+    if (basePrompt) {
+      return basePrompt + browserInstruction;
+    }
+    return browserInstruction.trim();
   }
 
   private mapEvent(event: AgentCoreEvent): ConversationEvent {
@@ -487,7 +669,6 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       case 'assistant':
         return { type: 'assistant', sessionId: event.session_id, content: (event.content ?? []) as ContentBlock[], model: event.model };
       case 'result': {
-        // Map token_usage from AgentCore container format to backend format
         const tu = (event as any).token_usage;
         const tokenUsage = tu ? {
           inputTokens: tu.input_tokens ?? 0,
@@ -500,6 +681,13 @@ export class AgentCoreAgentRuntime implements AgentRuntime {
       }
       case 'error':
         return { type: 'error', sessionId: event.session_id, code: event.code ?? 'AGENTCORE_ERROR', message: event.message ?? 'Unknown error' };
+      case 'browser_live_view_ready':
+        return {
+          type: 'browser_live_view_ready',
+          sessionId: event.sessionId,
+          liveViewUrl: event.liveViewUrl,
+          browserIdentifier: event.browserIdentifier,
+        };
       default:
         return { type: 'error', code: 'UNKNOWN_EVENT', message: `Unknown event type: ${(event as any).type}` };
     }

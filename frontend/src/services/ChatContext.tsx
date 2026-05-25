@@ -188,6 +188,14 @@ export function ChatProvider({ children, initialSessionId, initialSop, initialAg
     }
   }, [backendSessionId])
 
+  // Open persistent subscription for real-time external event delivery (Feishu, etc.)
+  useEffect(() => {
+    if (backendSessionId) {
+      sessionStreamManager.openSubscription(backendSessionId)
+      return () => { sessionStreamManager.closeSubscription(backendSessionId) }
+    }
+  }, [backendSessionId])
+
   // On mount, if we have a stored backend session, load it
   useEffect(() => {
     if (backendSessionId) {

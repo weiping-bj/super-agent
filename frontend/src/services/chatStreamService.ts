@@ -98,6 +98,19 @@ export interface PreviewReadyEvent {
   name?: string;
 }
 
+export interface BrowserFrameEvent {
+  type: 'browser_frame';
+  screenshotData: string;
+  browserToolName?: string;
+}
+
+export interface BrowserLiveViewReadyEvent {
+  type: 'browser_live_view_ready';
+  liveViewUrl: string;
+  sessionId: string;
+  browserIdentifier?: string;
+}
+
 export type ChatStreamEvent =
   | SessionStartEvent
   | AssistantEvent
@@ -105,7 +118,9 @@ export type ChatStreamEvent =
   | HeartbeatEvent
   | ErrorEvent
   | DoneEvent
-  | PreviewReadyEvent;
+  | PreviewReadyEvent
+  | BrowserFrameEvent
+  | BrowserLiveViewReadyEvent;
 
 /**
  * Callbacks for consuming chat stream events.
@@ -117,6 +132,8 @@ export interface ChatStreamCallbacks {
   onHeartbeat?: (event: HeartbeatEvent) => void;
   onError?: (event: ErrorEvent) => void;
   onPreviewReady?: (event: PreviewReadyEvent) => void;
+  onBrowserFrame?: (event: BrowserFrameEvent) => void;
+  onBrowserLiveViewReady?: (event: BrowserLiveViewReadyEvent) => void;
   onDone?: () => void;
 }
 
@@ -292,6 +309,21 @@ export function parseSSEData(data: string, eventName?: string): ChatStreamEvent 
             url: parsed.url ?? '',
             name: parsed.appName ?? parsed.name,
           } satisfies PreviewReadyEvent;
+
+        case 'browser_frame':
+          return {
+            type: 'browser_frame',
+            screenshotData: parsed.screenshotData ?? '',
+            browserToolName: parsed.browserToolName,
+          } satisfies BrowserFrameEvent;
+
+        case 'browser_live_view_ready':
+          return {
+            type: 'browser_live_view_ready',
+            liveViewUrl: parsed.liveViewUrl ?? '',
+            sessionId: parsed.sessionId ?? '',
+            browserIdentifier: parsed.browserIdentifier,
+          } satisfies BrowserLiveViewReadyEvent;
 
         default:
           // Unknown type — return null
@@ -471,6 +503,14 @@ export function streamChat(
 
               case 'preview_ready':
                 callbacks.onPreviewReady?.(event);
+                break;
+
+              case 'browser_frame':
+                callbacks.onBrowserFrame?.(event);
+                break;
+
+              case 'browser_live_view_ready':
+                callbacks.onBrowserLiveViewReady?.(event);
                 break;
 
               case 'done':

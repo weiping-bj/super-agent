@@ -19,6 +19,7 @@ import type { QuickQuestion, Agent } from '@/types'
 import { getAvatarDisplayUrl, getAvatarFallback, shouldShowAvatarImage } from '@/utils/avatarUtils'
 import { restClient } from '@/services/api/restClient'
 import { AgentMentionPopup, type AgentMentionPopupHandle, type MentionAgent } from '@/components/chat/AgentMentionPopup'
+import { BrowserLiveView } from '@/components/chat/BrowserLiveView'
 
 // ============================================================================
 // File Tab types & viewer
@@ -2130,6 +2131,7 @@ export function Chat() {
     >
       <div className="h-full">
         <ChatInterfaceContent />
+        <BrowserLiveView />
       </div>
     </ChatProvider>
   )

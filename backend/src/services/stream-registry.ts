@@ -19,6 +19,8 @@ interface ActiveStream {
 
 class StreamRegistry {
   private streams = new Map<string, ActiveStream>();
+  /** Persistent session-level emitters for long-lived subscribers (e.g. WebUI watching a session). */
+  private sessionEmitters = new Map<string, EventEmitter>();
 
   /**
    * Register a new active stream for a session.
@@ -33,12 +35,19 @@ class StreamRegistry {
 
   /**
    * Push an event to the stream buffer and notify subscribers.
+   * Also emits on the persistent session emitter for long-lived subscribers.
    */
   push(sessionId: string, event: ConversationEvent): void {
     const stream = this.streams.get(sessionId);
-    if (!stream) return;
-    stream.buffer.push(event);
-    stream.emitter.emit('event', event);
+    if (stream) {
+      stream.buffer.push(event);
+      stream.emitter.emit('event', event);
+    }
+    // Notify persistent subscribers regardless of whether a stream is registered
+    const sessionEmitter = this.sessionEmitters.get(sessionId);
+    if (sessionEmitter) {
+      sessionEmitter.emit('event', event);
+    }
   }
 
   /**
@@ -49,6 +58,11 @@ class StreamRegistry {
     if (!stream) return;
     stream.done = true;
     stream.emitter.emit('done');
+    // Notify persistent subscribers that this generation round is done
+    const sessionEmitter = this.sessionEmitters.get(sessionId);
+    if (sessionEmitter) {
+      sessionEmitter.emit('done');
+    }
     // Clean up after a delay to allow late reconnects
     setTimeout(() => {
       this.streams.delete(sessionId);
@@ -79,6 +93,30 @@ class StreamRegistry {
       emitter: stream.emitter,
       done: stream.done,
     };
+  }
+
+  /**
+   * Get or create a persistent emitter for a session.
+   * Used by long-lived subscribers (WebUI watching a session for external events).
+   * The emitter stays alive across multiple generation rounds.
+   */
+  getSessionEmitter(sessionId: string): EventEmitter {
+    let emitter = this.sessionEmitters.get(sessionId);
+    if (!emitter) {
+      emitter = new EventEmitter();
+      this.sessionEmitters.set(sessionId, emitter);
+    }
+    return emitter;
+  }
+
+  /**
+   * Remove persistent emitter when no more listeners.
+   */
+  cleanupSessionEmitter(sessionId: string): void {
+    const emitter = this.sessionEmitters.get(sessionId);
+    if (emitter && emitter.listenerCount('event') === 0) {
+      this.sessionEmitters.delete(sessionId);
+    }
   }
 }
 

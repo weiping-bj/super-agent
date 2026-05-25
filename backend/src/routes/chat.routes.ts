@@ -466,6 +466,68 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
   );
 
   /**
+   * GET /api/chat/sessions/:id/subscribe
+   * Persistent SSE subscription for a session. Stays open and delivers events
+   * whenever the session generates (from any source: WebUI, Feishu, API).
+   * Used by the frontend to receive real-time updates for externally-triggered runs.
+   */
+  fastify.get<{ Params: { id: string } }>(
+    '/sessions/:id/subscribe',
+    {
+      preHandler: [authenticate],
+      schema: {
+        description: 'Subscribe to live session events (persistent SSE)',
+        tags: ['Chat'],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = validateSchema(idParamSchema, request.params);
+      await chatService.getSessionById(id, request.user!.orgId);
+
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': '*',
+      });
+
+      // Send initial heartbeat so the client knows the connection is alive
+      reply.raw.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: Date.now() })}\n\n`);
+
+      const heartbeat = setInterval(() => {
+        try { reply.raw.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: Date.now() })}\n\n`); }
+        catch { /* client gone */ }
+      }, 15_000);
+
+      const emitter = streamRegistry.getSessionEmitter(id);
+      let clientDisconnected = false;
+
+      const onEvent = (event: unknown) => {
+        if (clientDisconnected) return;
+        try {
+          reply.raw.write(`data: ${JSON.stringify(sanitizeEvent(event as import('../services/claude-agent.service.js').ConversationEvent))}\n\n`);
+        } catch { /* client gone */ }
+      };
+
+      emitter.on('event', onEvent);
+
+      reply.raw.on('close', () => {
+        clientDisconnected = true;
+        clearInterval(heartbeat);
+        emitter.removeListener('event', onEvent);
+        streamRegistry.cleanupSessionEmitter(id);
+      });
+    }
+  );
+
+  /**
    * POST /api/chat/sessions
    * Create a new chat session.
    */
